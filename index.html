@@ -77,8 +77,15 @@ function parseTable(raw, idx) {
   if (headerIndex < 0) throw new Error(`표 ${idx}: 헤더에서 '다수픽' 열을 찾지 못했습니다.`);
   const header = rows[headerIndex];
   const majorityIndex = header.findIndex(c => norm(c).includes("다수픽"));
-  const players = header.slice(majorityIndex + 1).map((name, offset) => ({name: cleanCell(name), col: majorityIndex + 1 + offset}))
-    .filter(p => p.name && !/^(작성수|적중수|적중률|연속적중)$/.test(norm(p.name)));
+  const players = header.slice(majorityIndex + 1)
+  .map((name, offset) => ({
+    name: cleanCell(name),
+    col: majorityIndex + 1 + offset
+  }))
+  .filter(p =>
+    p.name &&
+    !/(작성수|적중수|적중률|연속적중|합계|총계|전체|평균|총합|순위)/.test(norm(p.name))
+  );
   if (!players.length) throw new Error(`표 ${idx}: '다수픽' 뒤에서 선수 이름을 찾지 못했습니다.`);
   const findRow = label => rows.find(r => r.some(c => norm(c) === label));
   const countRow = findRow("작성수");
