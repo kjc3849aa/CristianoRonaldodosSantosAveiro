@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3개 표 적중률 합산기</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif;color:#202533;background:#f5f7fb}
+*{box-sizing:border-box}body{margin:0;padding:28px 16px 48px}.wrap{max-width:1100px;margin:auto}
+h1{font-size:26px;margin:0 0 8px}.sub{color:#687386;margin:0 0 22px;line-height:1.6}
+.panel{background:white;border:1px solid #e1e6ef;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 2px 8px #18243a08}
+label{display:block;font-weight:700;margin-bottom:9px}textarea{width:100%;min-height:170px;resize:vertical;border:1px solid #cbd3df;border-radius:9px;padding:12px;font:13px/1.55 ui-monospace,Consolas,monospace}
+.hint{font-size:12px;color:#778195;margin-top:7px;line-height:1.5}
+button{border:0;border-radius:9px;padding:12px 18px;font-weight:700;cursor:pointer}
+.primary{background:#245bd6;color:white}.secondary{background:#edf1f7;color:#273246}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin:16px 0}
+.error{color:#b42318;background:#fff1f0;padding:12px;border-radius:9px;white-space:pre-wrap}
+.summary{display:flex;gap:12px;flex-wrap:wrap}.metric{background:#f3f6fc;padding:12px 15px;border-radius:10px;min-width:145px}.metric b{display:block;font-size:21px;margin-top:3px}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:10px 12px;border-bottom:1px solid #e8ecf2;text-align:left}th{background:#f7f9fc;color:#586477}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{color:#778195;padding:20px 0}.result-wrap{overflow:auto}
+@media(max-width:600px){body{padding:18px 10px}h1{font-size:22px}.panel{padding:13px}th,td{padding:8px;font-size:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>3개 표 적중률 합산기</h1>
+  <p class="sub">엑셀·웹사이트에서 복사한 탭 구분 표 또는 마크다운 표를 붙여넣으면 선수별 작성수와 적중률을 읽어 자동으로 합산합니다.</p>
+  <div class="panel"><label for="t1">표 1</label><textarea id="t1" placeholder="첫 번째 표 전체를 복사해서 붙여넣으세요."></textarea></div>
+  <div class="panel"><label for="t2">표 2</label><textarea id="t2" placeholder="두 번째 표 전체를 복사해서 붙여넣으세요."></textarea></div>
+  <div class="panel"><label for="t3">표 3</label><textarea id="t3" placeholder="세 번째 표 전체를 복사해서 붙여넣으세요."></textarea></div>
+  <div class="panel"><b>자동 산정 기준</b><ul>
+    <li>선수 범위: '다수픽' 다음 열부터 마지막 선수 열까지 (다수픽 자체는 제외)</li>
+    <li>각 표의 전체 경기 수: 선수별 작성수 중 가장 높은 숫자</li>
+    <li>작성수 기준: 전체 경기 수의 절반 이상</li>
+    <li>각 표에서 작성수가 기준 이상이고 적중률이 50%를 초과해야 유효</li>
+    <li>세 표 모두 유효한 선수만 적중률을 합산하고, 합계 180% 초과만 표시</li>
+    <li>합산 점수 내림차순 정렬</li>
+  </ul><div class="hint">적중률은 표의 '적중률' 행 값을 사용합니다. 작성수·적중률 행이 없는 표는 계산할 수 없습니다.</div></div>
+  <div class="actions"><button class="primary" id="calc">합산 결과 계산</button><button class="secondary" id="copy" disabled>결과 복사</button><button class="secondary" id="clear">전체 지우기</button></div>
+  <div id="message"></div>
+  <div class="panel" id="results" hidden><div class="summary" id="summary"></div><div class="result-wrap"><table><thead><tr><th>순위</th><th>이름</th><th class="num">표 1</th><th class="num">표 2</th><th class="num">표 3</th><th class="num">합계</th></tr></thead><tbody id="tbody"></tbody></table></div><div class="hint">표시된 결과만 복사됩니다. 각 표의 적중률은 50% 초과, 작성수는 해당 표의 최대 작성수 절반 이상인 경우만 인정됩니다.</div></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let lastTSV = "";
+function cleanCell(s) {
+  return String(s ?? "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, " ")
+    .replace(/\*\*/g, "").replace(/`/g, "").replace(/&nbsp;/g, " ").replace(/&#x20;/g, " ").trim();
+}
+function splitRow(line) {
+  const raw = String(line ?? "").replace(/\r/g, "");
+  // Excel/웹 표 복사 시 탭 구분자를 우선 사용하고, 빈 셀도 보존합니다.
+  if (raw.includes("\t")) return raw.split("\t").map(cleanCell);
+  const s0 = raw.trim();
+  if (!s0.includes("|")) return null;
+  let s = s0;
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  const cells = s.split("|").map(cleanCell);
+  // 마크다운 구분선 행 제거
+  if (cells.length && cells.every(c => /^:?-{3,}:?$/.test(c))) return null;
+  return cells;
+}
+function parsePercent(s) {
+  const m = String(s ?? "").replace(/,/g, "").match(/-?\d+(?:\.\d+)?\s*%?/);
+  return m ? Number(m[0].replace("%", "").trim()) : null;
+}
+function parseCount(s) {
+  const m = String(s ?? "").replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+function norm(s) { return cleanCell(s).replace(/\s/g, ""); }
+function parseTable(raw, idx) {
+  const rows = String(raw ?? "").split(/\r?\n/).map(splitRow).filter(r => r && r.some(c => c !== ""));
+  if (rows.length < 3) throw new Error(`표 ${idx}: 탭으로 구분된 표 또는 마크다운 표를 찾지 못했습니다. 원본 표를 복사해 붙여넣었는지 확인해주세요.`);
+  const headerIndex = rows.findIndex(r => r.some(c => norm(c).includes("다수픽")));
+  if (headerIndex < 0) throw new Error(`표 ${idx}: 헤더에서 '다수픽' 열을 찾지 못했습니다.`);
+  const header = rows[headerIndex];
+  const majorityIndex = header.findIndex(c => norm(c).includes("다수픽"));
+  const players = header.slice(majorityIndex + 1).map((name, offset) => ({name: cleanCell(name), col: majorityIndex + 1 + offset}))
+    .filter(p => p.name && !/^(작성수|적중수|적중률|연속적중)$/.test(norm(p.name)));
+  if (!players.length) throw new Error(`표 ${idx}: '다수픽' 뒤에서 선수 이름을 찾지 못했습니다.`);
+  const findRow = label => rows.find(r => r.some(c => norm(c) === label));
+  const countRow = findRow("작성수");
+  const rateRow = findRow("적중률");
+  if (!countRow) throw new Error(`표 ${idx}: '작성수' 행이 없습니다.`);
+  if (!rateRow) throw new Error(`표 ${idx}: '적중률' 행이 없습니다.`);
+  const counts = players.map(p => parseCount(countRow[p.col]));
+  const maxCount = Math.max(0, ...counts.filter(Number.isFinite));
+  if (!Number.isFinite(maxCount) || maxCount <= 0) throw new Error(`표 ${idx}: 작성수에서 전체 경기 수를 계산할 수 없습니다.`);
+  const threshold = Math.ceil(maxCount / 2);
+  const data = new Map();
+  for (const p of players) {
+    const count = parseCount(countRow[p.col]);
+    const rate = parsePercent(rateRow[p.col]);
+    data.set(p.name, {count, rate, threshold, maxCount, valid: count !== null && count >= threshold && rate !== null && rate > 50});
+  }
+  return {data, maxCount, threshold};
+}
+function fmt(n) { return `${Number(n.toFixed(2))}%`; }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+$("calc").addEventListener("click", () => {
+  $("message").innerHTML = ""; $("results").hidden = true;
+  try {
+    const tables = [1,2,3].map(i => parseTable($("t"+i).value, i));
+    const allNames = [...new Set(tables.flatMap(t => [...t.data.keys()]))];
+    const results = [];
+    for (const name of allNames) {
+      const entries = tables.map(t => t.data.get(name));
+      if (entries.some(e => !e || !e.valid)) continue;
+      const total = entries.reduce((sum,e) => sum + e.rate, 0);
+      if (total > 180) results.push({name, rates: entries.map(e=>e.rate), total});
+    }
+    results.sort((a,b) => b.total-a.total || a.name.localeCompare(b.name,"ko"));
+    $("summary").innerHTML = tables.map((t,i) => `<div class="metric">표 ${i+1} 전체 경기 수<b>${t.maxCount}</b><span class="hint">작성수 기준 ${t.threshold}개 이상</span></div>`).join("") + `<div class="metric">최종 대상자<b>${results.length}명</b><span class="hint">3개 표 모두 유효 · 합계 180% 초과</span></div>`;
+    $("tbody").innerHTML = results.length ? results.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.name)}</td><td class="num">${fmt(r.rates[0])}</td><td class="num">${fmt(r.rates[1])}</td><td class="num">${fmt(r.rates[2])}</td><td class="num"><b>${fmt(r.total)}</b></td></tr>`).join("") : `<tr><td colspan="6" class="empty">조건을 모두 충족하는 사람이 없습니다.</td></tr>`;
+    lastTSV = ["순위\t이름\t표1\t표2\t표3\t합계", ...results.map((r,i)=>`${i+1}\t${r.name}\t${fmt(r.rates[0])}\t${fmt(r.rates[1])}\t${fmt(r.rates[2])}\t${fmt(r.total)}`)].join("\n");
+    $("copy").disabled = !results.length; $("results").hidden = false;
+  } catch(e) { $("message").innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`; }
+});
+$("copy").addEventListener("click", async()=>{if(!lastTSV)return;try{await navigator.clipboard.writeText(lastTSV);$("message").textContent="결과를 클립보드에 복사했습니다.";}catch(e){$("message").textContent="복사 권한이 없습니다. 결과 표를 직접 선택해 복사해주세요.";}});
+$("clear").addEventListener("click",()=>{[1,2,3].forEach(i=>$("t"+i).value="");$("message").textContent="";$("results").hidden=true;lastTSV="";$("copy").disabled=true;});
+</script>
+</body>
+</html>
